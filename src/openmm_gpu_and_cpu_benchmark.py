@@ -20,6 +20,7 @@ from openmm.app import *
 from openmm import *
 from openmm.unit import *
 import numpy as np
+import psutil
 
 ###################################################################
 gpu_power_log = []
@@ -71,11 +72,12 @@ def monitor_cpu_power(interval=0.5):
                 cpu_power_log.append((timestamp, usage, None))
 
             time.sleep(interval)
+
     except Exception as e:
         print(f"CPU power monitoring failed: {e}")
 
 ###################################################################
-def run_simulation(pdb_id, steps, q, use_gpu, gpu_index, cpu_index):
+def run_simulation(pdb_id, steps, nsave, q, use_gpu, gpu_index, cpu_index):
     print(f"Fetching PDB {pdb_id}...")
 
     if not use_gpu and cpu_index is not None:
@@ -129,7 +131,7 @@ def run_simulation(pdb_id, steps, q, use_gpu, gpu_index, cpu_index):
         properties = {'CudaDeviceIndex': str(gpu_index), 'CudaPrecision': 'mixed'}
     else:
         platform = Platform.getPlatformByName('CPU')
-        properties = {}
+        properties = {'CpuThreads': '1'}
 
     simulation = Simulation(fixer.topology, system, integrator, platform, properties)
     simulation.context.setPositions(fixer.positions)
@@ -146,7 +148,7 @@ def run_simulation(pdb_id, steps, q, use_gpu, gpu_index, cpu_index):
 
     print("Running simulation...")
     simulation.context.setVelocitiesToTemperature(300*kelvin)
-    simulation.reporters.append(StateDataReporter(sys.stdout, 1000, step=True, potentialEnergy=True, temperature=True, speed=True))
+    simulation.reporters.append(StateDataReporter(sys.stdout, nsave, step=True, potentialEnergy=True, temperature=True, speed=True))
 
     # GPU power monitoring (only if using GPU)
     global monitoring
@@ -203,7 +205,7 @@ def run_simulation(pdb_id, steps, q, use_gpu, gpu_index, cpu_index):
                     if str(i) == str(cpu_index):
                         result += f"STATS: {pdb_id}, CPU {i}: Mean = {power:.2f} W, Max = {max_power[i]:.2f} W\n"
             else:
-                result += "No valid GPU power data recorded.\n"
+                result += "No valid CPU power data recorded.\n"
 
     ns_per_day = (steps * 0.002 * 86400) / (end - start)
     result += f"Time taken: {end - start:.2f} s\n"
@@ -220,24 +222,26 @@ if __name__ == "__main__":
     # Run the simulation
     #run_simulation(args.pdb_id.upper(), args.steps)
     q = Queue()
-    sim1 = Process(target=run_simulation, args=(args.pdb_id.upper(), args.steps, q, True, '0', None))
-    sim2 = Process(target=run_simulation, args=(args.pdb_id.upper(), args.steps, q, True, '1', None))
-    cpu_sims = [Process(target=run_simulation, args=(args.pdb_id.upper(), args.steps, q, False, None, i)) for i in range(0, 50)]
+    sim1 = Process(target=run_simulation, args=(args.pdb_id.upper(), 100000, 1000, q, True, '0', None))
+    sim2 = Process(target=run_simulation, args=(args.pdb_id.upper(), 100000, 1000, q, True, '1', None))
+    #sim1 = Process(target=run_simulation, args=(args.pdb_id.upper(), 1000, 100, q, False, None, 0))
+    #sim2 = Process(target=run_simulation, args=(args.pdb_id.upper(), 1000, 100, q, False, None, 1))
+    cpu_sims = [Process(target=run_simulation, args=(args.pdb_id.upper(), 1000, 100, q, False, None, i)) for i in range(0, 50)]
 
 
     sim1.start()
-    time.sleep(5)
+    #time.sleep(5)
     sim2.start()
     for sim in cpu_sims:
-        time.sleep(5)
+        #time.sleep(5)
         sim.start()
 
 
     sim1.join()
-    time.sleep(5)
+    #time.sleep(5)
     sim2.join()
     for sim in cpu_sims:
-        time.sleep(5)
+        #time.sleep(5)
         sim.join()
 
     print("Both simulations completed.")
